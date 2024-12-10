@@ -1,0 +1,4 @@
+- live cell with <2 live neighbors dies
+- live cell with 2, 3 live neighbors lives
+- live cell with >3 neighbors dies
+- dead cell with exactly 3 neighbors becomes live
