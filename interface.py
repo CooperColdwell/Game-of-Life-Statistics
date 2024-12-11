@@ -13,11 +13,10 @@ class SimulationInterface:
         self.cell_size = cell_size  # pixels per cell
         self.center_offset = (self.grid_size - self.visible_size) // 2 # the visible portion of the grid
         self.running = False
+        self.current_step = 0
 
         # Create initial grid object
         self.grid = StateGrid(self.grid_size)
-        # self.white_cell_history = []
-        # self.state = np.zeros((self.grid_size, self.grid_size), dtype=int)
 
         self.setup_interface()
         
@@ -54,10 +53,15 @@ class SimulationInterface:
         ttk.Label(controls, text="White Cells:").grid(row=2, column=0, pady=5)
         self.white_cell_var = tk.StringVar(value="0")
         ttk.Label(controls, textvariable=self.white_cell_var).grid(row=2, column=1, pady=5)
+
+        # Current step counter
+        ttk.Label(controls, text="Current step:").grid(row=3, column=0, pady=5)
+        self.current_step_var = tk.StringVar(value="0")
+        ttk.Label(controls, textvariable=self.current_step_var).grid(row=3, column=1, pady=5)
         
         # Control buttons
         button_frame = ttk.Frame(controls)
-        button_frame.grid(row=3, column=0, columnspan=2, pady=10)
+        button_frame.grid(row=4, column=0, columnspan=2, pady=10)
         
         ttk.Button(button_frame, text="RUN", command=self.run_simulation).grid(row=0, column=0, padx=2)
         ttk.Button(button_frame, text="STEP", command=self.step_simulation).grid(row=0, column=1, padx=2)
@@ -102,8 +106,10 @@ class SimulationInterface:
     def step_simulation(self):
         self.grid.step()
         self.grid.record_state()
+        self.current_step += 1 # increment step counter
+        self.current_step_var.set(str(self.current_step)) # increment current step
         self.draw_grid()
-        self.running = False ## DEBUG/DEV: pauses after each step so I can check operability without getting stuck in loop
+        # self.running = False ## DEBUG/DEV: pauses after each step so I can check operability without getting stuck in loop
     
     def pause_simulation(self):
         self.running = False
@@ -114,7 +120,7 @@ class SimulationInterface:
                 steps_remaining = int(self.timesteps_var.get())
                 if steps_remaining > 0:
                     self.step_simulation()
-                    self.timesteps_var.set(str(steps_remaining - 1))
+                    self.timesteps_var.set(str(steps_remaining - 1)) # decrement steps remaining
                     self.root.after(100, self.simulate_steps)
                 else:
                     self.running = False
@@ -125,8 +131,10 @@ class SimulationInterface:
         self.grid.save_data(self.filename_var.get(), self.cell_size)
 
     def reset_simulation(self):
-        self.grid = StateGrid(self.grid_size)
+        self.grid = StateGrid(self.grid_size) # create a fresh StateGrid object
         self.running = False
+        self.current_step = 0  # Reset step counter
+        self.current_step_var.set("0")  # Update step counter display
         self.draw_grid()
 
 def main():
