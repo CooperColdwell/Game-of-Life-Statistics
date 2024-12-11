@@ -43,13 +43,13 @@ class StateGrid:
             (0, -1),            (0, 1),   # Middle row
             (1, -1),  (1, 0),  (1, 1)     # Bottom row
         ])
-        
+
         # Broadcasting to get all neighbor positions for all centers at once
         # Shape will be (num_centers, num_neighbors)
         neighbor_rows = center_rows[:, np.newaxis] + rel_positions[:, 0]
         neighbor_cols = center_cols[:, np.newaxis] + rel_positions[:, 1]
-        
-        # Create boundary mask
+
+        # Create boundary mask - make sure locations fall within the actual grid
         valid_rows = (neighbor_rows >= 0) & (neighbor_rows < self.state.shape[0])
         valid_cols = (neighbor_cols >= 0) & (neighbor_cols < self.state.shape[1])
         valid_mask = valid_rows & valid_cols
@@ -68,18 +68,21 @@ class StateGrid:
 
     def _cascade_neighbor_analysis(
         self,
-        condition_a: Callable[[np.ndarray], np.ndarray],
-        condition_b: Callable[[np.ndarray], np.ndarray],
-        starting_value: float = 1
+        # condition_a: Callable[[np.ndarray], np.ndarray],
+        # condition_b: Callable[[np.ndarray], np.ndarray],
+        # starting_value: float = 1
     ) -> Set[Tuple[int, int]]:
         """
         Perform cascading neighborhood analysis:
-        1. Find initial positions where array equals starting_value
-        2. For each position, compute sum of position + neighbors
-        3. Find neighbors that satisfy condition B
-        4. For those neighbors, compute their neighborhood sums
-        5. Return all unique positions that satisfy the conditions
-        
+            1. Find initial positions where array equals starting_value
+            2. For each position, compute sum of position + neighbors
+            3. Find neighbors that satisfy condition B
+            4. For those neighbors, compute their neighborhood sums
+            5. Return all unique positions that satisfy the conditions
+            
+        I originally planned to use np.where() to get relevant locations, then iterate for each location,
+        but the response I got when I asked Anthropic's Claude made me realize I could handle all at once.
+
         Parameters:
         array: 2D numpy array
         condition_a: function that takes neighborhood sums and returns boolean mask
@@ -89,60 +92,56 @@ class StateGrid:
         Returns:
         set of (row, col) tuples for all positions satisfying the conditions
         """
-        # Find initial positions
-        initial_rows, initial_cols = np.where(self.state == starting_value)
+        # Get positions of live cells
+        live_rows, live_cols = np.where(self.state == 1)
         
-        # Compute sums for initial positions and their neighbors
-        initial_sums = self._compute_neighborhood_sum(initial_rows, initial_cols)
+        # Compute sums of initially live cells and their neighbors
+        live_sums = self._compute_neighborhood_sum(live_rows, live_cols)
         
-        # Apply condition A to initial positions
-        mask_a = condition_a(initial_sums)
-        valid_rows_a = initial_rows[mask_a]
-        valid_cols_a = initial_cols[mask_a]
-        
-        # Get neighbors of positions that satisfied condition A
+        # Get live cells that stay live in the next step
+        still_alive = (live_sums==3) | (live_sums==4) # if local sum=3, live, if local sum=4, keep value
+
+        # Create meshgrid of relative neighbor positions
         rel_positions = np.array([
             (-1, -1), (-1, 0), (-1, 1),
             (0, -1),           (0, 1),
             (1, -1),  (1, 0),  (1, 1)
         ])
         
-        # Broadcasting to get all neighbor positions
-        neighbor_rows = valid_rows_a[:, np.newaxis] + rel_positions[:, 0]
-        neighbor_cols = valid_cols_a[:, np.newaxis] + rel_positions[:, 1]
+        # Broadcasting magic: Add relative positions to each target position
+        # This creates arrays of shape (num_targets, num_neighbors)
+        neighbor_rows = live_rows[:, np.newaxis] + rel_positions[:, 0]
+        neighbor_cols = live_cols[:, np.newaxis] + rel_positions[:, 1]
         
         # Create boundary mask
         valid_rows = (neighbor_rows >= 0) & (neighbor_rows < self.state.shape[0])
         valid_cols = (neighbor_cols >= 0) & (neighbor_cols < self.state.shape[1])
         valid_mask = valid_rows & valid_cols
         
-        # Flatten and get unique neighbor positions
+        # Flatten and get unique neighbor positions -- i.e. don't repeat processing on shared neighbors
         valid_neighbor_rows = neighbor_rows[valid_mask]
         valid_neighbor_cols = neighbor_cols[valid_mask]
         unique_neighbors = np.unique(np.column_stack((valid_neighbor_rows, valid_neighbor_cols)), axis=0)
-        
-        # Compute sums for neighbor positions
-        neighbor_sums = self._compute_neighborhood_sum(unique_neighbors[:, 0], unique_neighbors[:, 1])
-        
-        # Apply condition B to neighbor positions
-        mask_b = condition_b(neighbor_sums)
-        final_rows = unique_neighbors[mask_b, 0]
-        final_cols = unique_neighbors[mask_b, 1]
-        
-        # Convert to set of tuples for unique positions
-        return set(zip(final_rows, final_cols))
+        # Compute local sums for dead neighbors of currently live cells
+        dead_unique_neighbors = self.state[unique_neighbors[:,0], unique_neighbors[:,1]]==0
+        neighbor_sums = self._compute_neighborhood_sum(unique_neighbors[dead_unique_neighbors, 0], unique_neighbors[dead_unique_neighbors, 1])
+
+        # Get dead neighbors that come to life
+        births = neighbor_sums == 3 # if local sum is 3, then that cell comes to life
+        final_rows = unique_neighbors[dead_unique_neighbors, 0][births]
+        final_cols = unique_neighbors[dead_unique_neighbors, 1][births]
+
+        # Return the cells that should be alive in the next time step
+        return np.concatenate((final_rows, live_rows[still_alive]),axis=0), np.concatenate((final_cols, live_cols[still_alive]), axis=0)
 
     def step(self):
-        # live_coords = np.where(self.state==1)
-        # live_coords_print = [(int(y), int(x)) for y,x in zip(live_coords[0], live_coords[1])] # numpy arrays start in the top left corner and are indexed by arr[row][col]
-        # print(live_coords_print)
         """ 
         'Egocentric approach' to checking GoL conditions (from the GoL Wikipedia page):
             1. if sum of all 9 fields in a neighborhood is 3, inner field state in next gen is life
                 - 2 cases: 3 live cells around dead cell (birth), or 2 live cells around live cell (survival)
             2. if sum of all 9 fields is 4, the center cell keeps current state
                 - live cell with 3 live neighbors: survive
-                - dead cell with 4 live neighbors: does not come alive
+                - dead cell with 4 live neighbors: stays dead
             3. any other sum: center field dies or stays dead
         This approach checks the neighborhood for ALL locations (like a sliding convolution), which I consider to be inefficient.
         The state of a dead cell surrounded by dead cells will not change, so we shouldn't bother checking them. Instead, check
@@ -154,19 +153,14 @@ class StateGrid:
         is used. This implementation uses rigid boundaries (everything outside the grid is dead), so edge cells must be checked 
         normally.
         """
-        # Get positions of live cells
-        live_cells = np.where(self.state==1)
-        # Create empty numpy arrays in memory to store the live cells' next states
-        live_cells_next = np.empty_like(live_cells)
-        print(live_cells)
+        # Get cells that should be alive in the next time step
+        live_rows, live_cols = self._cascade_neighbor_analysis()
 
-        pass
-        # Create meshgrid of relative neighbor positions
-        rel_positions = np.array([
-            (-1, -1), (-1, 0), (-1, 1),
-            (0, -1),           (0, 1),
-            (1, -1),  (1, 0),  (1, 1)
-        ])
+        # Wipe the state grid
+        self.state = np.zeros_like(self.state)
+
+        # Set the relevant cells to live
+        self.state[live_rows,live_cols] = 1
 
     def record_state(self):
         self.white_cell_history.append(self.get_white_cell_count())

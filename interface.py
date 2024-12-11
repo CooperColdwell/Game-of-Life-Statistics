@@ -103,9 +103,12 @@ class SimulationInterface:
             self.grid.save_initial_state(self.filename_var.get(), self.cell_size)
             self.simulate_steps()
 
-    def step_simulation(self):
+    def step_simulation(self, run_loop=False):
         self.grid.step()
         self.grid.record_state()
+        if not run_loop:
+            steps_remaining = int(self.timesteps_var.get())
+            self.timesteps_var.set(str(steps_remaining - 1)) # decrement steps remaining
         self.current_step += 1 # increment step counter
         self.current_step_var.set(str(self.current_step)) # increment current step
         self.draw_grid()
@@ -119,9 +122,9 @@ class SimulationInterface:
             try:
                 steps_remaining = int(self.timesteps_var.get())
                 if steps_remaining > 0:
-                    self.step_simulation()
+                    self.step_simulation(run_loop=True)
                     self.timesteps_var.set(str(steps_remaining - 1)) # decrement steps remaining
-                    self.root.after(100, self.simulate_steps)
+                    self.root.after(250, self.simulate_steps)
                 else:
                     self.running = False
             except ValueError:
@@ -135,6 +138,7 @@ class SimulationInterface:
         self.running = False
         self.current_step = 0  # Reset step counter
         self.current_step_var.set("0")  # Update step counter display
+        self.timesteps_var.set("100")
         self.draw_grid()
 
 def main():
