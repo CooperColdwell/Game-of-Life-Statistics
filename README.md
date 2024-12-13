@@ -31,3 +31,5 @@ Analysis of the `r-pentamino` configuration is done in the [analysis Jupyter not
 ```(bash)
 python interface.py
 ```
+
+| P.S. This code took me a *reallly* long time to write and get working. I've never made a Python GUI before this so I had to constantly get debugging help from Anthropic's Claude.ai. : )
