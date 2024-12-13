@@ -19,14 +19,17 @@ The rules of ***Conway's Game of Life*** ensure that the state of a cell in the 
 ## Contents and Usage
 To install the required libraries with conda, run the following:   
 ```(bash)
-conda create -n gol -f requirements.txt
+conda create -n gol -f environment.yml
 conda activate gol
 ```
-The following Python files contain all the code needed to run:
+The simulation interface and game logic are contained in these files:
 - [playground.py](playground.py): contains the class for the GoL grid/board/whatever-you-want-to-call-it
 - [interface.py](interface.py): contains the code that runs the GUI and allows the user to control the game.
 
+Analysis of the `r-pentamino` configuration is done in the [analysis Jupyter notebook](analysis.ipynb) using helper functions found in [analysis_utils.py](analysis_utils.py).
 ### To run the interface:
 ```(bash)
 python interface.py
 ```
+
+| P.S. This code took me a *reallly* long time to write and get working. I've never made a Python GUI before this so I had to constantly get debugging help from Anthropic's Claude.ai. : )
