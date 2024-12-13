@@ -1,5 +1,8 @@
 import tkinter as tk
 from tkinter import ttk
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 from playground import StateGrid
 
 class SimulationInterface:
@@ -15,6 +18,10 @@ class SimulationInterface:
         self.running = False
         self.current_step = 0
 
+        # Initialize plot data
+        self.steps_data = []
+        self.white_cells_data = []
+        
         # Create initial grid object
         self.grid = StateGrid(self.grid_size)
 
@@ -45,8 +52,8 @@ class SimulationInterface:
         ttk.Entry(controls, textvariable=self.timesteps_var).grid(row=0, column=1, pady=5)
         
         # Filename input
-        ttk.Label(controls, text="Save Filename:").grid(row=1, column=0, pady=5)
-        self.filename_var = tk.StringVar(value="simulation_data")
+        ttk.Label(controls, text="Run Name:").grid(row=1, column=0, pady=5)
+        self.filename_var = tk.StringVar(value="data")
         ttk.Entry(controls, textvariable=self.filename_var).grid(row=1, column=1, pady=5)
         
         # White cell counter
@@ -68,9 +75,47 @@ class SimulationInterface:
         ttk.Button(button_frame, text="PAUSE", command=self.pause_simulation).grid(row=0, column=2, padx=2)
         ttk.Button(button_frame, text="SAVE", command=self.save_data).grid(row=1, column=0, padx=2, pady=5)
         ttk.Button(button_frame, text="RESET", command=self.reset_simulation).grid(row=1, column=1, padx=2, pady=5)
-        
+        # Setup plot
+        self.setup_plot(controls)      
+  
         self.draw_grid()
+
+    def setup_plot(self, parent):
+        # Create figure and axis
+        self.figure = Figure(figsize=(5, 4), dpi=100)
+        self.ax = self.figure.add_subplot(111)
+        self.figure.subplots_adjust(bottom=0.15)  # Add bottom margin for x-label
+        self.ax.set_xlabel('Step')
+        self.ax.set_ylabel('Live Cells')
+        self.ax.grid(True)
         
+        # Create canvas
+        self.plot_canvas = FigureCanvasTkAgg(self.figure, parent)
+        self.plot_canvas.get_tk_widget().grid(row=5, column=0, columnspan=2, pady=10)
+        
+        # Initialize empty plot
+        self.line, = self.ax.plot([], [])
+        self.ax.set_xlim(0, 100)  # Initial x-axis range
+        self.ax.set_ylim(0, 100)  # Initial y-axis range
+        
+    def update_plot(self):
+        # Update data
+        self.steps_data.append(self.current_step)
+        self.white_cells_data.append(self.grid.get_white_cell_count())
+        
+        # Update plot
+        self.line.set_data(self.steps_data, self.white_cells_data)
+        
+        # Adjust axis limits if needed
+        if self.current_step >= self.ax.get_xlim()[1]:
+            self.ax.set_xlim(0, self.current_step * 1.5)
+        
+        max_white_cells = max(self.white_cells_data) if self.white_cells_data else 100
+        if max_white_cells >= self.ax.get_ylim()[1]:
+            self.ax.set_ylim(0, max_white_cells * 1.2)
+        
+        self.figure.canvas.draw()
+         
     def draw_grid(self):
         self.canvas.delete("all")
         visible_region = self.grid.get_visible_region(self.center_offset, self.visible_size)
@@ -96,24 +141,27 @@ class SimulationInterface:
         # Flip cell state
         self.grid.flip_cell(grid_x, grid_y)
         self.draw_grid()
+        self.update_plot()
     
     def run_simulation(self):
         if not self.running:
             self.running = True
-            self.grid.save_initial_state(self.filename_var.get(), self.cell_size)
+            self.grid.save_initial_state(self.cell_size, self.filename_var.get())
             self.simulate_steps()
 
     def step_simulation(self, run_loop=False):
+
         self.grid.step()
         self.grid.record_state()
         if not run_loop:
             steps_remaining = int(self.timesteps_var.get())
             self.timesteps_var.set(str(steps_remaining - 1)) # decrement steps remaining
+        if (self.current_step+1) % 10 == 0:
+            self.grid.save_data(intermed=True)
         self.current_step += 1 # increment step counter
         self.current_step_var.set(str(self.current_step)) # increment current step
         self.draw_grid()
-        # self.running = False ## DEBUG/DEV: pauses after each step so I can check operability without getting stuck in loop
-    
+        self.update_plot()    
     def pause_simulation(self):
         self.running = False
     
@@ -124,14 +172,14 @@ class SimulationInterface:
                 if steps_remaining > 0:
                     self.step_simulation(run_loop=True)
                     self.timesteps_var.set(str(steps_remaining - 1)) # decrement steps remaining
-                    self.root.after(250, self.simulate_steps)
+                    self.root.after(100, self.simulate_steps) ## DELAY HERE: THIS IS HOW LONG BETWEEN STEPS
                 else:
                     self.running = False
             except ValueError:
                 self.running = False
 
     def save_data(self):
-        self.grid.save_data(self.filename_var.get(), self.cell_size)
+        self.grid.save_data(self.cell_size)
 
     def reset_simulation(self):
         self.grid = StateGrid(self.grid_size) # create a fresh StateGrid object
@@ -139,6 +187,14 @@ class SimulationInterface:
         self.current_step = 0  # Reset step counter
         self.current_step_var.set("0")  # Update step counter display
         self.timesteps_var.set("100")
+
+        # Reset plot data and clear plot
+        self.steps_data = []
+        self.white_cells_data = []
+        self.line.set_data([], [])
+        self.ax.set_xlim(0, 100)
+        self.ax.set_ylim(0, 100)
+        self.figure.canvas.draw()
         self.draw_grid()
 
 def main():

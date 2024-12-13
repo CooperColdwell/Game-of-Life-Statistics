@@ -3,12 +3,19 @@ from PIL import Image
 import os
 from datetime import datetime
 from typing import Set, Tuple, Callable
+import matplotlib.pyplot as plt
 
 class StateGrid:
-    def __init__(self, grid_size=1000):
+    def __init__(self, grid_size=1000, save_folder='data'):
+        if not os.path.exists('simulation_data'):
+            os.makedirs('simulation_data')
+        self.save_folder=f'simulation_data/{save_folder}'
+
         self.grid_size = grid_size
         self.state = np.zeros((self.grid_size, self.grid_size), dtype=int)
         self.white_cell_history = []
+
+        self.image_history = {}
 
     def get_cell(self, x, y):
         return self.state[y][x]
@@ -20,12 +27,15 @@ class StateGrid:
     def get_white_cell_count(self):
         return np.sum(self.state == 1)
 
-    def get_visible_region(self, center_offset, visible_size):
+    def get_visible_region(self, center_offset, visible_size, store_visible_area=True):
         """ Returns the specified region of the grid. For interface use. """
         start_x = center_offset
         start_y = center_offset
         end_x = start_x + visible_size
         end_y = start_y + visible_size
+        if store_visible_area:
+            self.center_offset = center_offset
+            self.visible_size = visible_size
         return self.state[start_y:end_y, start_x:end_x]
 
     def _compute_neighborhood_sum(self, center_rows: np.ndarray, center_cols: np.ndarray) -> np.ndarray:
@@ -33,8 +43,8 @@ class StateGrid:
         Compute the sum of each center position and its eight neighbors.
         
         This function uses clever broadcasting to compute sums for multiple centers simultaneously.
-        Rather than looping through each center and its neighbors, we create offset arrays for all
-        neighbor positions at once and use NumPy's advanced indexing to gather the values.
+        Instead of than looping through each center and its neighbors, we create offset arrays for all
+        neighbor positions at once and use NumPy's indexing to gather the values.
         """
         # Define relative positions for center and all 8 neighbors
         rel_positions = np.array([
@@ -66,12 +76,7 @@ class StateGrid:
         
         return neighborhood_sums
 
-    def _cascade_neighbor_analysis(
-        self,
-        # condition_a: Callable[[np.ndarray], np.ndarray],
-        # condition_b: Callable[[np.ndarray], np.ndarray],
-        # starting_value: float = 1
-    ) -> Set[Tuple[int, int]]:
+    def _analyze_live_neighborhoods(self):
         """
         Perform cascading neighborhood analysis:
             1. Find initial positions where array equals starting_value
@@ -83,14 +88,8 @@ class StateGrid:
         I originally planned to use np.where() to get relevant locations, then iterate for each location,
         but the response I got when I asked Anthropic's Claude made me realize I could handle all at once.
 
-        Parameters:
-        array: 2D numpy array
-        condition_a: function that takes neighborhood sums and returns boolean mask
-        condition_b: function that takes neighborhood sums and returns boolean mask
-        starting_value: value to start the search from (default 1)
-        
         Returns:
-        set of (row, col) tuples for all positions satisfying the conditions
+            2 numpy arrays: one for row coord of live cells in next time step, and another for col coords
         """
         # Get positions of live cells
         live_rows, live_cols = np.where(self.state == 1)
@@ -154,7 +153,7 @@ class StateGrid:
         normally.
         """
         # Get cells that should be alive in the next time step
-        live_rows, live_cols = self._cascade_neighbor_analysis()
+        live_rows, live_cols = self._analyze_live_neighborhoods()
 
         # Wipe the state grid
         self.state = np.zeros_like(self.state)
@@ -165,37 +164,95 @@ class StateGrid:
     def record_state(self):
         self.white_cell_history.append(self.get_white_cell_count())
 
-    def save_data(self, filename, cell_size=5):
-        if not os.path.exists('simulation_data'):
-            os.makedirs('simulation_data')
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
+    def save_data(self, cell_size=5, intermed=False):
         # Save grid state as image
-        self._save_grid_image(f"{filename}_final_{timestamp}.png", cell_size)
+        if intermed:
+            self._save_grid_image(f"{self.save_folder}/step_{len(self.white_cell_history)}.png", cell_size, intermed)
+        else:
+            self._save_grid_image(f"{self.save_folder}/step_{len(self.white_cell_history)}.png", cell_size)
+            # Save white cell history
+            with open(f"{self.save_folder}/live_cell_history.txt", 'w') as f:
+                for i, count in enumerate(self.white_cell_history):
+                    f.write(f"{count}\n")
+            self._save_img_history()
+            self._save_history_plot()
 
-        # Save white cell history
-        with open(f"simulation_data/{filename}_history_{timestamp}.txt", 'w') as f:
-            for i, count in enumerate(self.white_cell_history):
-                f.write(f"Timestep {i}: {count}\n")
-
-    def save_initial_state(self, filename, cell_size=5):
-        if not os.path.exists('simulation_data'):
-            os.makedirs('simulation_data')
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self._save_grid_image(f"{filename}_initial_{timestamp}.png", cell_size)
+    def save_initial_state(self, cell_size=5, foldername=None):
+        # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if foldername: # User has chosen to overwrite the default data folder name in the interface
+            self.save_folder = self.save_folder.split('/')[0]+'/'+foldername
+            if not os.path.exists(self.save_folder):
+                os.makedirs(self.save_folder)
+        self._save_grid_image(f"{self.save_folder}/initial_state.png", cell_size, True)
         self.white_cell_history = [self.get_white_cell_count()]
 
-    def _save_grid_image(self, filename, cell_size):
-        img = Image.new('RGB', (self.grid_size * cell_size, self.grid_size * cell_size), 'black')
-        pixels = img.load()
+    def _save_grid_image(self, filename, cell_size, intermed=False):
+        if self.center_offset:
+            if intermed:
+                # Initialize black image array (0,0,0)
+                img_array = np.zeros((self.visible_size * cell_size, 
+                                    self.visible_size * cell_size, 
+                                    3), dtype=np.uint8)
 
-        for i in range(self.grid_size):
-            for j in range(self.grid_size):
-                color = (255, 255, 255) if self.state[i][j] == 1 else (0, 0, 0)
-                for x in range(cell_size):
-                    for y in range(cell_size):
-                        pixels[j * cell_size + x, i * cell_size + y] = color
+                states = self.get_visible_region(self.center_offset, self.visible_size, False)
 
-        img.save(f"simulation_data/{filename}")
+                # Fill in the pixels
+                for i in range(self.visible_size):
+                    for j in range(self.visible_size):
+                        color = np.array([255, 255, 255] if states[i][j] == 1 else [0, 0, 0], dtype=np.uint8)
+                        # Fill the cell_size x cell_size block with the color
+                        img_array[i*cell_size:(i+1)*cell_size, 
+                                j*cell_size:(j+1)*cell_size] = color
+                    
+                # Store in image history
+                self.image_history[filename] = img_array
+            else:
+                img = Image.new('RGB', (self.visible_size * cell_size, self.visible_size * cell_size), 'black')
+                pixels = img.load()
+                states = self.get_visible_region(self.center_offset, self.visible_size, False)
+
+                for i in range(self.visible_size):
+                    for j in range(self.visible_size):
+                        color = (255, 255, 255) if states[i][j] == 1 else (0, 0, 0)
+                        for x in range(cell_size):
+                            for y in range(cell_size):
+                                pixels[j * cell_size + x, i * cell_size + y] = color
+        else:
+            img = Image.new('RGB', (self.grid_size * cell_size, self.grid_size * cell_size), 'black')
+            pixels = img.load()
+
+            for i in range(self.grid_size):
+                for j in range(self.grid_size):
+                    color = (255, 255, 255) if self.state[i][j] == 1 else (0, 0, 0)
+                    for x in range(cell_size):
+                        for y in range(cell_size):
+                            pixels[j * cell_size + x, i * cell_size + y] = color
+
+            img.save(filename)
+    
+    def _save_img_history(self):
+        if self.image_history:
+            for key, value in self.image_history.items():
+                img = Image.fromarray(value)
+                img.save(key)
+
+    def _save_history_plot(self):
+        # Create new figure with larger size
+        plt.figure(figsize=(5, 4))
+        
+        # Create the plot
+        plt.plot(range(len(self.white_cell_history)), self.white_cell_history, 
+                color='blue', linewidth=1.5)
+        
+        # Add labels and grid
+        plt.xlabel('Time Step')
+        plt.ylabel('Live Cells')
+        plt.title('Live Cell Count History')
+        plt.grid(True)
+        
+        # Adjust layout to prevent label cutoff
+        plt.tight_layout()
+        
+        # Save plot
+        plt.savefig(f"{self.save_folder}/history_plot.png", dpi=300, bbox_inches='tight')
+        plt.close()  # Close the figure to free memory
